@@ -5,6 +5,8 @@ TODO
 1.module name can be recognised by at cmd. For:
 	LC6311: use AT+CGMR
 	SIM4100: use ATI
+2.since :shared is used, the module can only support one
+	module at a time now.
 =cut
 
 use strict;
@@ -36,15 +38,40 @@ my $_at_cont :shared = "";
 
 my $_sms_status :shared = SMS_IDLE;
 
+sub get_cmd_cont {
+	return $_at_cont;
+}
+
+sub get_modem_type {
+	my $self = shift;
+
+	$self->cmd("ATI") or die "error ATI: $!";
+	my $data = $self->get_cmd_cont();
+	return "SIM4100" if $data =~ "SIM4100";
+
+	$self->cmd("AT+CGMR") or die "error AT+CGMR: $!";
+	$data = $self->get_cmd_cont();
+	return "LC6311" if $data =~ "LC6311";
+
+	return "UNKNOWN";
+}
+
 sub new {
 	my $class = shift;
 	my %hash = @_;
 	my $self = {};
 	bless $self, $class or die "cannot bless in $class: $!";
 	$self->{port} = $hash{port} || "/dev/ttyUSB5";
-	$self->{type} = (uc $hash{type}) || "LC6311";
+ 	$self->{type} = (uc $hash{type}) || undef;
 	$self->{retry} = $hash{retry} || 3;
-	$self->open_port or die "cannot open port.";
+	$self->open_port or die "cannot open port: $!";
+	$self->listen or die "cannot listen(): $!";
+	print "start listening at port ", $self->{port} if DEBUG;
+	if (not defined $self->{type}) {
+		my $type = $self->get_modem_type();
+		$self->{type} = $type;
+		print "device type is $type.\n";
+	}
 	$self;
 }
 
@@ -152,11 +179,23 @@ sub module_init_lc6311 {
 	$self->cmd_array(@init_arr);
 }
 
+sub module_init_sim4100 {
+	my $self = shift;
+	my @init_arr = (
+			'ATE0',
+			'AT+CFUN=1',
+			'AT+CMGF=1',
+			);
+	$self->cmd_array(@init_arr);
+}
+
 sub module_init {
 	my $self = shift;
 	my $type = $self->{type};
 	if ($type eq "LC6311") {
 		$self->module_init_lc6311();
+	} elsif ($type eq "SIM4100") {
+		$self->module_init_sim4100();
 	} else {
 		print "not supported now." if DEBUG;
 		0; # not supported now.
